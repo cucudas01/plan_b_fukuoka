@@ -15,19 +15,18 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '후쿠오카 플랜B',
-      debugShowCheckedModeBanner: false, // 오른쪽 위 'Debug' 띠 제거
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // 깔끔한 화이트/블루 테마
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF3B82F6), // 세련된 블루
-          background: const Color(0xFFF8F9FA), // 아주 연한 회색 배경
+          background: const Color(0xFFF8F9FA), // 화이트톤 배경
         ),
         useMaterial3: true,
         fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,
-          surfaceTintColor: Colors.white, // 스크롤 시 색 변함 방지
+          surfaceTintColor: Colors.white,
           elevation: 0,
           centerTitle: false,
           titleTextStyle: TextStyle(
@@ -82,24 +81,39 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
     _loadDataAndLocation();
   }
 
-  // --- 데이터 로딩 로직 ---
+  // --- 데이터 로딩 (중복 제거 포함) ---
   Future<void> _loadDataAndLocation() async {
     try {
       final rawData = await rootBundle.loadString("assets/restaurants.csv");
       List<List<dynamic>> listData = const CsvToListConverter().convert(rawData);
       List<Restaurant> parsedList = [];
 
+      // 중복 체크를 위한 메모장
+      Set<String> addedNames = {};
+
       for (var i = 1; i < listData.length; i++) {
         var row = listData[i];
+
+        // 가게 이름 가져오기
+        String currentName = row[2].toString();
+
+        // 이미 등록된 이름이면 건너뛰기 (중복 제거)
+        if (addedNames.contains(currentName)) {
+          continue;
+        }
+        // 처음 보는 이름이면 메모장에 등록
+        addedNames.add(currentName);
+
         double? lat, lng;
         if (row.length > 12) {
           lat = double.tryParse(row[11].toString());
           lng = double.tryParse(row[12].toString());
         }
+
         parsedList.add(Restaurant(
           region: row[0].toString(),
           category: row[1].toString(),
-          name: row[2].toString(),
+          name: currentName,
           lat: lat,
           lng: lng,
           tips: row[9].toString(),
@@ -110,6 +124,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
       setState(() => statusMessage = "위치를 확인하고 있습니다...");
       Position position = await _determinePosition();
 
+      // 거리 계산
       for (var restaurant in parsedList) {
         if (restaurant.lat != null && restaurant.lng != null) {
           restaurant.distance = Geolocator.distanceBetween(
@@ -121,6 +136,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
         }
       }
 
+      // 가까운 순서대로 정렬
       parsedList.sort((a, b) {
         if (a.distance == null) return 1;
         if (b.distance == null) return -1;
@@ -139,6 +155,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
     }
   }
 
+  // --- 위치 권한 확인 ---
   Future<Position> _determinePosition() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return Future.error('GPS가 꺼져 있습니다.');
@@ -150,21 +167,24 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
     return await Geolocator.getCurrentPosition();
   }
 
+  // --- 지도 연결 (이름으로 검색 수정됨) ---
   Future<void> _launchMap(Restaurant res) async {
-    Uri url;
-    if (res.lat != null && res.lng != null) {
-      url = Uri.parse("google.navigation:q=${res.lat},${res.lng}");
-    } else {
-      url = Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(res.name)}");
-    }
+    // 검색어: "가게이름 + 지역명" (예: 이치란 텐진) -> 정확도 향상
+    String query = "${res.name} ${res.region}";
+
+    // 구글맵 검색 URL
+    Uri url = Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(query)}");
+
     try {
-      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) throw 'err';
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw 'err';
+      }
     } catch (e) {
       await launchUrl(url, mode: LaunchMode.platformDefault);
     }
   }
 
-  // 아이콘 선택
+  // --- 아이콘 선택 ---
   IconData _getCategoryIcon(String category) {
     if (category.contains("라멘") || category.contains("면")) return Icons.ramen_dining_rounded;
     if (category.contains("스시") || category.contains("해산물")) return Icons.set_meal_rounded;
@@ -179,7 +199,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
     if (isLoading) {
       return Scaffold(
         body: Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const CircularProgressIndicator(strokeWidth: 2), // 로딩바도 얇게
+          const CircularProgressIndicator(strokeWidth: 2),
           const SizedBox(height: 20),
           Text(statusMessage, style: const TextStyle(color: Colors.grey)),
         ])),
@@ -197,7 +217,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
         ],
       ),
       body: restaurants.isEmpty
-          ? const Center(child: Text("주변 맛집 데이터가 없습니다."))
+          ? const Center(child: Text("데이터가 없습니다."))
           : ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: restaurants.length,
@@ -229,7 +249,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // 1. 심플한 아이콘 박스
+                          // 아이콘
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
@@ -240,7 +260,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
                           ),
                           const SizedBox(width: 16),
 
-                          // 2. 이름 및 정보
+                          // 이름 및 정보
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -262,7 +282,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
                             ),
                           ),
 
-                          // 3. 거리 표시 (강조)
+                          // 거리
                           if (res.distance != null)
                             Text(
                               "${res.distance! < 1000 ? res.distance!.toStringAsFixed(0) : (res.distance! / 1000).toStringAsFixed(1)}${res.distance! < 1000 ? 'm' : 'km'}",
@@ -277,12 +297,11 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
 
                       const SizedBox(height: 16),
 
-                      // 4. 정보 칩 (웨이팅, 꿀팁)
+                      // 웨이팅 & 꿀팁 칩
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          // 웨이팅 정보
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                             decoration: BoxDecoration(
@@ -299,7 +318,6 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
                             ),
                           ),
 
-                          // 꿀팁 (있으면 노란색으로 강조)
                           if (res.tips.isNotEmpty)
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
