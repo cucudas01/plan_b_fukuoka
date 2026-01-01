@@ -24,8 +24,15 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
   assets:
     - assets/restaurants.csv
+
+flutter_launcher_icons:
+  android: "ic_launcher" # 안드로이드 아이콘 이름 설정
+  ios: true              # iOS 아이콘 생성 활성화
+  image_path: "assets/icon.png" # 준비한 이미지 경로
+  min_sdk_android: 21 # 안드로이드 최소 SDK 버전 (선택사항)
