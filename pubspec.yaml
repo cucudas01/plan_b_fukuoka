@@ -1,4 +1,4 @@
-name: plan_b_fukuoka
+name: plan_b
 description: "A new Flutter project."
 publish_to: 'none'
 version: 1.0.0+1
@@ -10,29 +10,42 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # ▼ 최신 버전으로 업데이트 (호환성 해결)
+  # 네트워크 및 데이터 처리
+  http: ^1.2.0
   csv: ^6.0.0
-  geolocator: ^13.0.0       # 위치 정보 최신 버전
-  url_launcher: ^6.3.0      # 지도 열기 최신 버전
-  file_picker: ^8.1.4       # [중요] 이 버전을 올려야 에러가 사라집니다!
+  flutter_dotenv: ^5.2.0   # [수정] 버전 6.0은 아직 없습니다. 안정된 5.2.0을 사용합니다.
 
+  # 기능 관련 패키지
+  geolocator: ^10.1.0      # [수정] 버전 13.0은 너무 높습니다. 호환성 좋은 버전을 사용합니다.
+  url_launcher: ^6.3.0
+  file_picker: ^8.1.4      # 최신 버전
+
+  # 로컬 저장소
   shared_preferences: ^2.3.2
   path_provider: ^2.1.4
+
+  # UI 아이콘
   cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+
+  # 앱 아이콘 생성기
   flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/restaurants.csv
 
+  # 에셋 설정 (점(.)env 파일과 이미지 폴더)
+  assets:
+    - .env
+    - assets/
+
+# 앱 아이콘 설정 (이미지가 assets/icon.png에 있어야 합니다)
 flutter_launcher_icons:
-  android: "ic_launcher" # 안드로이드 아이콘 이름 설정
-  ios: true              # iOS 아이콘 생성 활성화
-  image_path: "assets/icon.png" # 준비한 이미지 경로
-  min_sdk_android: 21 # 안드로이드 최소 SDK 버전 (선택사항)
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icon.png"
+  min_sdk_android: 21

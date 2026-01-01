@@ -1,3 +1,4 @@
+import 'dart:convert'; // JSON 파싱용
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -7,8 +8,21 @@ import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http; // HTTP 요청용
+import 'package:flutter_dotenv/flutter_dotenv.dart'; // [추가 1] .env 패키지 임포트
 
-void main() {
+// [추가 2] main 함수를 비동기(async)로 바꾸고 .env 로드
+void main() async {
+  // 비동기 작업을 위해 필수
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // .env 파일 불러오기 (혹시 파일이 없으면 에러 방지)
+  try {
+    await dotenv.load(fileName: ".env");
+  } catch (e) {
+    debugPrint("오류: .env 파일을 찾을 수 없습니다. ($e)");
+  }
+
   runApp(const MyApp());
 }
 
@@ -44,7 +58,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 메인 화면: CSV 파일 목록 관리
+// 1. 메인 화면
 // ---------------------------------------------------------------------------
 class FileListScreen extends StatefulWidget {
   const FileListScreen({super.key});
@@ -56,6 +70,7 @@ class FileListScreen extends StatefulWidget {
 class _FileListScreenState extends State<FileListScreen> {
   List<String> filePaths = [];
   List<String> fileNames = [];
+  bool isLocationLoading = false;
 
   @override
   void initState() {
@@ -68,12 +83,6 @@ class _FileListScreenState extends State<FileListScreen> {
     setState(() {
       filePaths = prefs.getStringList('saved_file_paths') ?? [];
       fileNames = prefs.getStringList('saved_file_names') ?? [];
-
-      if (filePaths.isEmpty) {
-        filePaths.add("assets/restaurants.csv");
-        fileNames.add("후쿠오카 맛집");
-        _saveFiles();
-      }
     });
   }
 
@@ -109,7 +118,6 @@ class _FileListScreenState extends State<FileListScreen> {
     }
   }
 
-  // ✨ [수정 완료] 모든 데이터를 살려서 변환하도록 로직 개선
   Future<String> _convertToAppFormat(String path, String fileName) async {
     final file = File(path);
     final rawData = await file.readAsString();
@@ -117,17 +125,14 @@ class _FileListScreenState extends State<FileListScreen> {
 
     if (rows.isEmpty) return path;
 
-    // 헤더 분석 (소문자로 변환하여 비교)
     List<dynamic> header = rows[0].map((e) => e.toString().toLowerCase()).toList();
 
-    // 필수 항목 인덱스 찾기
     int nameIdx = header.indexWhere((h) => h.contains('이름') || h.contains('name') || h.contains('가게'));
     int latIdx = header.indexWhere((h) => h.contains('lat') || h.contains('위도'));
     int lngIdx = header.indexWhere((h) => h.contains('lng') || h.contains('lon') || h.contains('경도'));
     int regionIdx = header.indexWhere((h) => h.contains('지역') || h.contains('region'));
     int catIdx = header.indexWhere((h) => h.contains('카테고리') || h.contains('분류') || h.contains('category'));
 
-    // ✨ 추가 정보 인덱스 찾기 (운영시간, 팁, 웨이팅 등)
     int openIdx = header.indexWhere((h) => h.contains('opentime') || h.contains('운영시간') || h.contains('영업시간'));
     int tipsIdx = header.indexWhere((h) => h.contains('tips') || h.contains('비고') || h.contains('팁') || h.contains('특이사항'));
     int waitIdx = header.indexWhere((h) => h.contains('waiting') || h.contains('대기') || h.contains('웨이팅'));
@@ -138,7 +143,6 @@ class _FileListScreenState extends State<FileListScreen> {
     if (nameIdx == -1) return path;
 
     List<List<dynamic>> newRows = [];
-    // 앱 표준 포맷 헤더
     newRows.add(['region', 'category', 'name', 'rating', 'reviews', 'price', 'link', 'image', 'opentime', 'tips', 'waiting', 'lat', 'lng']);
 
     for (int i = 1; i < rows.length; i++) {
@@ -151,11 +155,9 @@ class _FileListScreenState extends State<FileListScreen> {
       String lat = (latIdx != -1 && row.length > latIdx) ? row[latIdx].toString() : '';
       String lng = (lngIdx != -1 && row.length > lngIdx) ? row[lngIdx].toString() : '';
 
-      // ✨ [수정] 강제 '정보없음' 대신 CSV에 있는 값을 가져옴
       String opentime = (openIdx != -1 && row.length > openIdx) ? row[openIdx].toString() : '정보없음';
       String tips = (tipsIdx != -1 && row.length > tipsIdx) ? row[tipsIdx].toString() : '추가된 파일';
       String waiting = (waitIdx != -1 && row.length > waitIdx) ? row[waitIdx].toString() : '정보없음';
-
       String rating = (ratingIdx != -1 && row.length > ratingIdx) ? row[ratingIdx].toString() : '0.0';
       String reviews = (reviewIdx != -1 && row.length > reviewIdx) ? row[reviewIdx].toString() : '0';
       String price = (priceIdx != -1 && row.length > priceIdx) ? row[priceIdx].toString() : '0';
@@ -197,62 +199,117 @@ class _FileListScreenState extends State<FileListScreen> {
     _saveFiles();
   }
 
+  Future<void> _navigateToGooglePlaces() async {
+    setState(() => isLocationLoading = true);
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) throw 'GPS가 꺼져있습니다.';
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) throw '위치 권한이 거부되었습니다.';
+      }
+
+      Position position = await Geolocator.getCurrentPosition();
+
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => GooglePlacesListScreen(
+              lat: position.latitude,
+              lng: position.longitude,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("오류: $e")));
+      }
+    } finally {
+      if (mounted) setState(() => isLocationLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Plan B")),
-      body: filePaths.isEmpty
-          ? const Center(child: Text("오른쪽 아래 + 버튼을 눌러 파일을 추가하세요"))
-          : ReorderableListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: filePaths.length,
-        onReorder: _onReorder,
-        proxyDecorator: (child, index, animation) {
-          return Material(
-            elevation: 0,
-            color: Colors.transparent,
-            child: child,
-          );
-        },
-        itemBuilder: (context, index) {
-          String displayName = fileNames[index].replaceAll(".csv", "");
+      appBar: AppBar(title: const Text("Plan B Manager")),
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16.0),
+            child: ElevatedButton.icon(
+              onPressed: isLocationLoading ? null : _navigateToGooglePlaces,
+              icon: isLocationLoading
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.map_outlined, color: Colors.white),
+              label: Text(
+                  isLocationLoading ? "위치 확인 중..." : "구글 맵에서 실시간 맛집 찾기 (3.8↑)",
+                  style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF3B82F6),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                elevation: 3,
+              ),
+            ),
+          ),
 
-          return Card(
-            key: ValueKey(filePaths[index]),
-            elevation: 2,
-            margin: const EdgeInsets.only(bottom: 12),
-            color: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.map, color: Colors.blue),
-              ),
-              title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text("꾹 눌러서 순서 변경 / 터치하여 보기", style: TextStyle(fontSize: 12, color: Colors.grey)),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => _deleteFile(index),
-              ),
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => RestaurantListScreen(
-                      filePath: filePaths[index],
-                      title: displayName,
+          const Divider(height: 1, thickness: 1),
+
+          Expanded(
+            child: filePaths.isEmpty
+                ? const Center(child: Text("등록된 리스트가 없습니다.\n+ 버튼을 눌러 CSV 파일을 추가하세요.", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)))
+                : ReorderableListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: filePaths.length,
+              onReorder: _onReorder,
+              proxyDecorator: (child, index, animation) {
+                return Material(elevation: 0, color: Colors.transparent, child: child);
+              },
+              itemBuilder: (context, index) {
+                String displayName = fileNames[index].replaceAll(".csv", "");
+                return Card(
+                  key: ValueKey(filePaths[index]),
+                  elevation: 2,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  color: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(10)),
+                      child: const Icon(Icons.list_alt_rounded, color: Colors.black54),
                     ),
+                    title: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: const Text("저장된 목록 보기", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      onPressed: () => _deleteFile(index),
+                    ),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => RestaurantListScreen(
+                            filePath: filePaths[index],
+                            title: displayName,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 );
               },
             ),
-          );
-        },
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _pickAndAddCsv,
@@ -264,7 +321,171 @@ class _FileListScreenState extends State<FileListScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// 2. 상세 화면 (정렬 On/Off, 오픈 여부, 상세 정보 파싱)
+// 2. 구글 플레이스 API 리스트 화면
+// ---------------------------------------------------------------------------
+class GooglePlacesListScreen extends StatefulWidget {
+  final double lat;
+  final double lng;
+
+  const GooglePlacesListScreen({super.key, required this.lat, required this.lng});
+
+  @override
+  State<GooglePlacesListScreen> createState() => _GooglePlacesListScreenState();
+}
+
+class _GooglePlacesListScreenState extends State<GooglePlacesListScreen> {
+  // [추가 3] .env 파일에서 GOOGLE_API_KEY를 안전하게 가져옵니다.
+  final String _apiKey = dotenv.env['GOOGLE_API_KEY'] ?? "";
+
+  List<dynamic> _places = [];
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchNearbyPlaces();
+  }
+
+  Future<void> _fetchNearbyPlaces() async {
+    // 키가 비어있는지 확인
+    if (_apiKey.isEmpty) {
+      setState(() {
+        _errorMessage = ".env 파일에서 GOOGLE_API_KEY를 찾지 못했습니다.\n.env 파일을 확인해주세요.";
+        _isLoading = false;
+      });
+      return;
+    }
+
+    final String url =
+        "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+        "?location=${widget.lat},${widget.lng}"
+        "&radius=1500" // 반경 1.5km
+        "&type=restaurant"
+        "&language=ko" // 한국어 응답
+        "&key=$_apiKey";
+
+    try {
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+
+        if (data['status'] == 'OK') {
+          List<dynamic> results = data['results'];
+
+          List<dynamic> filtered = results.where((place) {
+            final rating = place['rating'];
+            return rating != null && (rating is num) && rating >= 3.8;
+          }).toList();
+
+          filtered.sort((a, b) {
+            double ratingA = (a['rating'] as num).toDouble();
+            double ratingB = (b['rating'] as num).toDouble();
+            return ratingB.compareTo(ratingA);
+          });
+
+          setState(() {
+            _places = filtered;
+            _isLoading = false;
+          });
+        } else {
+          setState(() {
+            _errorMessage = "구글 API 오류: ${data['status']}\n(${data['error_message'] ?? ''})";
+            _isLoading = false;
+          });
+        }
+      } else {
+        throw "서버 연결 실패";
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = "데이터를 불러오지 못했습니다: $e";
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _openGoogleMaps(String placeId) async {
+    final Uri url = Uri.parse("https://www.google.com/maps/search/?api=1&query=Google&query_place_id=$placeId");
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        throw '앱을 열 수 없습니다.';
+      }
+    } catch (e) {
+      await launchUrl(url, mode: LaunchMode.platformDefault);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("주변 맛집 (평점 3.8↑)")),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _errorMessage != null
+          ? Center(child: Text(_errorMessage!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)))
+          : _places.isEmpty
+          ? const Center(child: Text("조건에 맞는 맛집이 없습니다."))
+          : ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _places.length,
+        itemBuilder: (context, index) {
+          final place = _places[index];
+          final name = place['name'] ?? "이름 없음";
+          final rating = place['rating']?.toString() ?? "0.0";
+          final userRatingsTotal = place['user_ratings_total']?.toString() ?? "0";
+          final vicinity = place['vicinity'] ?? "";
+          final isOpen = place['opening_hours']?['open_now'] == true;
+
+          return Card(
+            margin: const EdgeInsets.only(bottom: 12),
+            elevation: 2,
+            color: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: ListTile(
+              contentPadding: const EdgeInsets.all(16),
+              leading: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.storefront, color: Colors.blue),
+              ),
+              title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.star_rounded, size: 16, color: Colors.amber[700]),
+                      const SizedBox(width: 4),
+                      Text("$rating ($userRatingsTotal)", style: const TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 10),
+                      if (isOpen)
+                        const Text("영업중", style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 12))
+                      else
+                        const Text("영업종료", style: TextStyle(color: Colors.red, fontSize: 12)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(vicinity, style: TextStyle(color: Colors.grey[600], fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+                ],
+              ),
+              trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey),
+              onTap: () => _openGoogleMaps(place['place_id']),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. 기존 CSV 상세 화면 (기존과 동일)
 // ---------------------------------------------------------------------------
 class RestaurantListScreen extends StatefulWidget {
   final String filePath;
@@ -289,6 +510,7 @@ class Restaurant {
   final String opentime;
   final String tips;
   final String waiting;
+  final double rating;
   double? distance;
 
   Restaurant({
@@ -300,6 +522,7 @@ class Restaurant {
     required this.opentime,
     required this.tips,
     required this.waiting,
+    required this.rating,
   });
 }
 
@@ -307,8 +530,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
   List<Restaurant> restaurants = [];
   bool isLoading = true;
   String statusMessage = "데이터를 불러오는 중입니다...";
-
-  bool _isSortByOpenActive = false; // 정렬 토글 상태
+  bool _isSortByOpenActive = false;
 
   @override
   void initState() {
@@ -319,20 +541,15 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
   bool _checkIsOpen(String opentime) {
     if (opentime.contains("24시간")) return true;
     if (!opentime.contains("-")) return true;
-
     try {
       final now = DateTime.now();
       final currentMinutes = now.hour * 60 + now.minute;
-
       final parts = opentime.split("-");
       if (parts.length != 2) return true;
-
       final startPart = parts[0].trim().split(":");
       final endPart = parts[1].trim().split(":");
-
       final startMinutes = int.parse(startPart[0]) * 60 + int.parse(startPart[1]);
       final endMinutes = int.parse(endPart[0]) * 60 + int.parse(endPart[1]);
-
       if (endMinutes < startMinutes) {
         return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
       } else {
@@ -372,6 +589,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
 
         String region = (row.isNotEmpty) ? row[0].toString() : "";
         String category = row.length > 1 ? row[1].toString() : "";
+        double rating = row.length > 3 ? (double.tryParse(row[3].toString()) ?? 0.0) : 0.0;
         String opentime = row.length > 8 ? row[8].toString() : "";
         String tips = row.length > 9 ? row[9].toString() : "";
         String waiting = row.length > 10 ? row[10].toString() : "";
@@ -385,6 +603,7 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
           opentime: opentime,
           tips: tips,
           waiting: waiting,
+          rating: rating,
         ));
       }
 
@@ -402,7 +621,6 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
             );
           }
         }
-        // 기본 정렬: 거리순
         parsedList.sort((a, b) {
           if (a.distance == null) return 1;
           if (b.distance == null) return -1;
@@ -415,14 +633,13 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
       setState(() {
         restaurants = parsedList;
         isLoading = false;
-        _isSortByOpenActive = false; // 초기화
+        _isSortByOpenActive = false;
       });
     } catch (e) {
       setState(() {
         statusMessage = "파일을 읽을 수 없습니다.\n형식이 올바르지 않거나 손상된 파일입니다.";
         isLoading = false;
       });
-      debugPrint("Error loading CSV: $e");
     }
   }
 
@@ -447,7 +664,6 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
     }
   }
 
-  // 정렬 토글 함수 (On/Off)
   void _onSortToggle() {
     setState(() {
       _isSortByOpenActive = !_isSortByOpenActive;
@@ -456,10 +672,8 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
         restaurants.sort((a, b) {
           bool isOpenA = _checkIsOpen(a.opentime);
           bool isOpenB = _checkIsOpen(b.opentime);
-
           if (isOpenA && !isOpenB) return -1;
           if (!isOpenA && isOpenB) return 1;
-
           if (a.distance != null && b.distance != null) {
             return a.distance!.compareTo(b.distance!);
           }
@@ -485,14 +699,11 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title.replaceAll(".csv", "")),
+        title: Text(widget.title),
         actions: [
           IconButton(
-            icon: Icon(
-                Icons.sort_rounded,
-                color: _isSortByOpenActive ? Colors.blue : Colors.black87
-            ),
-            tooltip: _isSortByOpenActive ? "기본 정렬로 복귀" : "영업 중인 식당 우선 정렬",
+            icon: Icon(Icons.sort_rounded, color: _isSortByOpenActive ? Colors.blue : Colors.black87),
+            tooltip: "영업 중인 식당 우선 정렬",
             onPressed: _onSortToggle,
           ),
           IconButton(
@@ -527,9 +738,6 @@ class _RestaurantListScreenState extends State<RestaurantListScreen> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// 3. 리스트 아이템 위젯
-// ---------------------------------------------------------------------------
 class RestaurantTile extends StatefulWidget {
   final Restaurant restaurant;
   final bool isOpen;
@@ -571,7 +779,7 @@ class _RestaurantTileState extends State<RestaurantTile> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withValues(alpha: isOpen ? 0.08 : 0.0),
+              color: Colors.grey.withOpacity(isOpen ? 0.08 : 0.0),
               blurRadius: 10,
               offset: const Offset(0, 4)
           ),
@@ -634,7 +842,21 @@ class _RestaurantTileState extends State<RestaurantTile> {
                             ],
                           ),
                           const SizedBox(height: 4),
-                          Text("${res.category} · ${res.region}", style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+                          Row(
+                            children: [
+                              Icon(Icons.star_rounded, size: 16, color: Colors.amber[700]),
+                              const SizedBox(width: 2),
+                              Text(
+                                res.rating > 0 ? res.rating.toString() : "-",
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                  "${res.category} · ${res.region}",
+                                  style: TextStyle(color: Colors.grey[500], fontSize: 13)
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -701,7 +923,7 @@ class _RestaurantTileState extends State<RestaurantTile> {
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                       decoration: BoxDecoration(
-                          color: isOpen ? Colors.orange[50] : Colors.orange[50]!.withValues(alpha: 0.5),
+                          color: isOpen ? Colors.orange[50] : Colors.orange[50]!.withOpacity(0.5),
                           borderRadius: BorderRadius.circular(8)
                       ),
                       child: Row(
@@ -712,7 +934,7 @@ class _RestaurantTileState extends State<RestaurantTile> {
                           Expanded(
                             child: Text(
                               res.tips,
-                              style: TextStyle(color: isOpen ? Colors.orange[900] : Colors.orange[900]!.withValues(alpha: 0.5), fontSize: 13, height: 1.3),
+                              style: TextStyle(color: isOpen ? Colors.orange[900] : Colors.orange[900]!.withOpacity(0.5), fontSize: 13, height: 1.3),
                               maxLines: _isExpanded ? null : 1,
                               overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
                             ),
