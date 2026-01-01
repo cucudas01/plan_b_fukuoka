@@ -4,27 +4,28 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.10.1
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
 
-  cupertino_icons: ^1.0.8
-
-
+  # ▼ 최신 버전으로 업데이트 (호환성 해결)
   csv: ^6.0.0
-  geolocator: ^13.0.0
-  url_launcher: ^6.3.0
+  geolocator: ^13.0.0       # 위치 정보 최신 버전
+  url_launcher: ^6.3.0      # 지도 열기 최신 버전
+  file_picker: ^8.1.4       # [중요] 이 버전을 올려야 에러가 사라집니다!
+
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true
-
-
   assets:
     - assets/restaurants.csv
