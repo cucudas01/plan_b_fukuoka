@@ -9,15 +9,14 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http; // HTTP 요청용
-import 'package:flutter_dotenv/flutter_dotenv.dart'; // [추가 1] .env 패키지 임포트
+import 'package:flutter_dotenv/flutter_dotenv.dart'; // .env 패키지
 
-// [추가 2] main 함수를 비동기(async)로 바꾸고 .env 로드
+// 비동기 메인 함수 (환경변수 로드)
 void main() async {
-  // 비동기 작업을 위해 필수
   WidgetsFlutterBinding.ensureInitialized();
 
-  // .env 파일 불러오기 (혹시 파일이 없으면 에러 방지)
   try {
+    // .env 파일 로드
     await dotenv.load(fileName: ".env");
   } catch (e) {
     debugPrint("오류: .env 파일을 찾을 수 없습니다. ($e)");
@@ -58,7 +57,7 @@ class MyApp extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 메인 화면
+// 1. 메인 화면 (파일 목록 및 지도 진입)
 // ---------------------------------------------------------------------------
 class FileListScreen extends StatefulWidget {
   const FileListScreen({super.key});
@@ -321,7 +320,7 @@ class _FileListScreenState extends State<FileListScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// 2. 구글 플레이스 API 리스트 화면
+// 2. 구글 플레이스 API 리스트 화면 (API 키 .env 연동)
 // ---------------------------------------------------------------------------
 class GooglePlacesListScreen extends StatefulWidget {
   final double lat;
@@ -334,7 +333,7 @@ class GooglePlacesListScreen extends StatefulWidget {
 }
 
 class _GooglePlacesListScreenState extends State<GooglePlacesListScreen> {
-  // [추가 3] .env 파일에서 GOOGLE_API_KEY를 안전하게 가져옵니다.
+  // .env 파일에서 키 가져오기
   final String _apiKey = dotenv.env['GOOGLE_API_KEY'] ?? "";
 
   List<dynamic> _places = [];
@@ -348,7 +347,6 @@ class _GooglePlacesListScreenState extends State<GooglePlacesListScreen> {
   }
 
   Future<void> _fetchNearbyPlaces() async {
-    // 키가 비어있는지 확인
     if (_apiKey.isEmpty) {
       setState(() {
         _errorMessage = ".env 파일에서 GOOGLE_API_KEY를 찾지 못했습니다.\n.env 파일을 확인해주세요.";
@@ -485,7 +483,7 @@ class _GooglePlacesListScreenState extends State<GooglePlacesListScreen> {
 }
 
 // ---------------------------------------------------------------------------
-// 3. 기존 CSV 상세 화면 (기존과 동일)
+// 3. 기존 CSV 상세 화면 (경고 수정 완료)
 // ---------------------------------------------------------------------------
 class RestaurantListScreen extends StatefulWidget {
   final String filePath;
@@ -779,7 +777,8 @@ class _RestaurantTileState extends State<RestaurantTile> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-              color: Colors.grey.withOpacity(isOpen ? 0.08 : 0.0),
+            // [수정] withOpacity -> withValues (최신 버전 경고 해결)
+              color: Colors.grey.withValues(alpha: isOpen ? 0.08 : 0.0),
               blurRadius: 10,
               offset: const Offset(0, 4)
           ),
@@ -923,7 +922,8 @@ class _RestaurantTileState extends State<RestaurantTile> {
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                       decoration: BoxDecoration(
-                          color: isOpen ? Colors.orange[50] : Colors.orange[50]!.withOpacity(0.5),
+                        // [수정] withOpacity -> withValues (최신 버전 경고 해결)
+                          color: isOpen ? Colors.orange[50] : Colors.orange[50]!.withValues(alpha: 0.5),
                           borderRadius: BorderRadius.circular(8)
                       ),
                       child: Row(
@@ -934,7 +934,8 @@ class _RestaurantTileState extends State<RestaurantTile> {
                           Expanded(
                             child: Text(
                               res.tips,
-                              style: TextStyle(color: isOpen ? Colors.orange[900] : Colors.orange[900]!.withOpacity(0.5), fontSize: 13, height: 1.3),
+                              // [수정] withOpacity -> withValues (최신 버전 경고 해결)
+                              style: TextStyle(color: isOpen ? Colors.orange[900] : Colors.orange[900]!.withValues(alpha: 0.5), fontSize: 13, height: 1.3),
                               maxLines: _isExpanded ? null : 1,
                               overflow: _isExpanded ? TextOverflow.visible : TextOverflow.ellipsis,
                             ),
